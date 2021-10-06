@@ -10,6 +10,7 @@ from pathlib import Path
 def split_csv(csvfile: Path, outdir: Path = None, splitnum: int = 2, prefix: str = '') -> None:
     """
     Split the given CSV-file evenly into the given number of parts
+
     :param csvfile: Original CSV-file to split up into `splitnum` parts
     :type csvfile: Path or str
     :param outdir: Directory where to save the split up parts into
@@ -32,17 +33,19 @@ def split_csv(csvfile: Path, outdir: Path = None, splitnum: int = 2, prefix: str
         outdir = csvfile.parent
     assert Path(outdir).is_dir() and Path(outdir).exists(), "outdir can't be used"
 
-    # calculate the rows with value in the CSV-file ( -1 don't count the headers )
-    file_length = int(len([1 for _ in csv.reader(csvfile.open('r', newline='')) if _]) - 1)
-    # calculate when to split the file
-    row_split = int(file_length / splitnum)
-    # assure that the file can be split up
-    assert row_split > 0, f"csvfile can't be split up, {splitnum} is larger than the available rows"
-    # get the headers
-    headers = next(csv.reader(csvfile.open('r', newline='')))
-
     # open the given CSV-file in read-mode
     with Path(csvfile).open('r', newline='') as given_csv:
+        # get the headers (move cursor to next row)
+        headers = next(csv.reader(given_csv))
+        # calculate the rows with value in the CSV-file
+        file_length = len([1 for _ in csv.reader(given_csv) if _])
+        # calculate when to split the file
+        row_split = int(file_length / splitnum)
+        # assure that the file can be split up
+        assert row_split > 0, f"csvfile can't be split up, {splitnum} is larger than the available rows"
+
+        # reset cursor to start of file
+        given_csv.seek(0)
         # read the rows of the CSV-file as a dict where the keys are the headers
         csv_row = csv.DictReader(given_csv, fieldnames=headers)
         next(csv_row)  # don't read the headers
@@ -88,8 +91,10 @@ if __name__ == '__main__':
             Examples:
                 Split CSV-file in 3 parts
                     python %(prog)s /path/to/file.csv -n 3
+
                 Split CSV-file in 2 parts and save parts to relative directory
                     python %(prog)s ./file.csv -o ./out/dir/
+
                 Give the split up CSV-files a prefix which result to: Prefix_file1.csv, etc.
                     python %(prog)s ./file.csv -p Prefix_
             """
