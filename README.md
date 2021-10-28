@@ -9,7 +9,6 @@ usage: python splitcsv.py </path/to/file.csv> [options] (-n | -r)
 This script splits the given CSV-file evenly into a given count of parts.
 
 Be aware!
-    It is assumed that the original CSV-file has headers.
     Can't split up the CSV-file if number of splits are larger than available rows.
     If split results into an uneven split, rows (multiple) can be discarded.
 
@@ -43,5 +42,4 @@ optional arguments:
                         n-times to split, default: 2
   -r RENAME [RENAME ...], --rename RENAME [RENAME ...]
                         names for the new files, minimal arguments: 2
-
 ```
