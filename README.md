@@ -25,21 +25,19 @@ Examples:
     Give the split up CSV-files a prefix (example output: ./csv_file1.csv, etc.)
         python splitcsv.py ./file.csv -p csv_
 
-    Randomize the rows of the new created split up CSV-files
-        python splitcsv.py ./file.csv --shuffle -n 2
-
 positional arguments:
   csvfile               CSV-file to split
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
-  -o OUTDIR, --outdir OUTDIR
-                        directory to place the new files, default: same as csvfile
-  -p PREFIX, --prefix PREFIX
-                        prefix for file names, default: nothing
-  -s, --shuffle         shuffle the output, default: no shuffle
   -n SPLITNUM, --splitnum SPLITNUM
                         n-times to split, default: 2
   -r RENAME [RENAME ...], --rename RENAME [RENAME ...]
                         names for the new files, minimal arguments: 2
+
+optional:
+  -o OUTDIR, --outdir OUTDIR
+                        directory to place the new files, default: same as csvfile
+  -p PREFIX, --prefix PREFIX
+                        prefix for file names, default: nothing
 ```
