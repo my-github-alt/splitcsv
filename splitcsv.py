@@ -1,42 +1,61 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # splitcsv.py
 
+from __future__ import annotations
+from collections.abc import Sequence
+from typing import Union, NewType, Optional
 
-from typing import List, Iterable, Iterator, Callable
 import argparse
 import csv
+import logging
+from itertools import cycle
 from pathlib import Path
 from textwrap import dedent
-from random import shuffle as random_shuffle
+
+FilePath = NewType('File', Union[str, Path])
+
+logger = logging.getLogger(__name__)
 
 
-def main(argv: List[str] = None, function: Callable = None) -> int:
-    """commandline entry function"""
+def _sniff_csv(csvfile: FilePath) -> [csv.Dialect, list[str]]:
+    """sniff the Dialect and the headers of the CSV-file"""
+    with Path(csvfile).open('r', newline='') as fd:
+        sniffer = csv.Sniffer()
+        [fd.readline() for _ in range(10)]  # doesn't go wrong when file is less than 10 lines
+        ten_rows = fd.tell()  # get the position of the cursor after 10 rows has been read
+        fd.seek(0)  # reset cursor
+        dialect = sniffer.sniff(fd.read(ten_rows))
+        fd.seek(0)
+        headers = []
+        if sniffer.has_header(fd.read(ten_rows)):
+            fd.seek(0)
+            headers: list[str] = next(csv.reader(fd, dialect=dialect))
+    return dialect, headers
 
+
+def parse_arguments(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """parse the given arguments"""
     description = dedent("""
-    This script splits the given CSV-file evenly into a given count of parts.
+        This script splits the given CSV-file evenly into a given count of parts.
 
-    Be aware!
-        Can't split up the CSV-file if number of splits are larger than available rows.
-        If split results into an uneven split, rows (multiple) can be discarded.
+        Be aware!
+            Can't split up the CSV-file if number of splits are larger than available rows.
+            If split results into an uneven split, rows (multiple) can be discarded.
 
-    Examples:
-        Split CSV-file in 3 parts
-            python %(prog)s /path/to/file.csv -n 3
+        Examples:
+            Split CSV-file in 3 parts
+                python %(prog)s /path/to/file.csv -n 3
 
-        Name the output files. (example output: ./A.csv and ./B.csv)
-            python %(prog)s ./file.csv -r A B
+            Name the output files. (example output: ./A.csv and ./B.csv)
+                python %(prog)s ./file.csv -r A B
 
-        Split CSV-file in 2 parts and save parts to relative directory
-            python %(prog)s ./file.csv -o ./out/dir/
+            Split CSV-file in 2 parts and save parts to relative directory
+                python %(prog)s ./file.csv -o ./out/dir/
 
-        Give the split up CSV-files a prefix (example output: ./csv_file1.csv, etc.)
-            python %(prog)s ./file.csv -p csv_
-
-        Randomize the rows of the new created split up CSV-files
-            python %(prog)s ./file.csv --shuffle -n 2
-    """)
+            Give the split up CSV-files a prefix (example output: ./csv_file1.csv, etc.)
+                python %(prog)s ./file.csv -p csv_
+        """)
 
     parser = argparse.ArgumentParser(
         prog=Path(__file__).name,
@@ -44,22 +63,13 @@ def main(argv: List[str] = None, function: Callable = None) -> int:
         formatter_class=argparse.RawTextHelpFormatter,
         description=description
     )
-    # positional arguments (required)
+
+    # required argument
     parser.add_argument("csvfile",
                         type=Path,
                         help="CSV-file to split")
-    # optional arguments
-    parser.add_argument("-o", "--outdir",
-                        default=None,  # <- could become the parent-dir of csvfile
-                        help="directory to place the new files, default: same as csvfile")
-    parser.add_argument("-p", "--prefix",
-                        default='',
-                        type=str,
-                        help="prefix for file names, default: nothing")
-    parser.add_argument("-s", "--shuffle",
-                        action='store_true',  # if given shuffle becomes true
-                        help="shuffle the output, default: no shuffle")
-    # mutual exclusive (can't choose both)
+
+    # split options
     mutex = parser.add_mutually_exclusive_group(required=False)
     mutex.add_argument("-n", "--splitnum",
                        default=None,  # this is the split amount if nothing is given
@@ -72,126 +82,94 @@ def main(argv: List[str] = None, function: Callable = None) -> int:
                        nargs='+',  # Error if only 1 name is given.
                        help="names for the new files, minimal arguments: 2")
 
+    # optional options
+    options = parser.add_argument_group(title='optional')
+    options.add_argument("-o", "--outdir",
+                         default=None,  # <- could become the parent-dir of csvfile
+                         type=Path,
+                         help="directory to place the new files, default: same as csvfile")
+    options.add_argument("-p", "--prefix",
+                         default='',
+                         type=str,
+                         help="prefix for file names, default: nothing")
+
     # parse the given arguments
     args: argparse.Namespace = parser.parse_args(args=argv)
 
-    # give the arguments some default values
-    if args.splitnum is None:
-        args.splitnum = 2  # assure the splitnum is at least 2
+    # assure `args.outdir` is defined
     if args.outdir is None:
-        args.outdir = args.csvfile.parent  # set the parent of the csv-file as the output directory
+        args.outdir = args.csvfile.parent
+
+    # fill `args.rename` with Paths
+    suffix = args.csvfile.suffix
+    if args.rename is not None:
+        args.rename = [args.outdir.joinpath(f'{args.prefix}{name}{suffix}')
+                       for name in args.rename]
     else:
-        args.outdir = Path(args.outdir)
-    if args.rename is None:  # create new file paths and new names
-        args.rename = [args.outdir.joinpath(f"{args.prefix}{args.csvfile.stem}{n}{args.csvfile.suffix}")
-                       for n in range(1, (args.splitnum + 1))]
-    else:  # create file paths for the given names  (splitnum is not given)
-        args.rename = [args.outdir.joinpath(f"{args.prefix}{n}{args.csvfile.suffix}")
-                       for n in args.rename]
+        args.splitnum = args.splitnum or 2
+        args.rename = [args.outdir.joinpath(f'{args.prefix}{args.csvfile.stem}{i}{suffix}')
+                       for i in range(args.splitnum)]
+        
+    # splitnum and length of rename list should be the same
+    args.splitnum = len(args.rename)
 
-    # check if the arguments are as expected
-    if not args.csvfile.exists():
-        print(f"{args.csvfile} doesn't exist")
-        return 101  # exit
-    if not args.outdir.exists():
-        print(f"{args.outdir} doesn't exist")
-        return 102  # exit
-    if not args.outdir.is_dir():
-        print(f"{args.outdir} is not a directory")
-        return 103  # exit
-    if not args.splitnum >= 2:
-        print(f"given splitnumber is less than 2, given: {args.splitnum}")
-        return 104  # exit
-    if not len(args.rename) >= 2:
-        print(f"given renames is less than 2, given: {len(args.rename)}")
-        return 105  # exit
+    # log arguments
+    for key, value in vars(args).items():
+        logger.debug(f'argument {key}: {value!r}')
 
-    # unpack the arguments as a dict into the given function
-    if function is not None:
-        function(**vars(args))
-
-    return 0  # exit
+    return args
 
 
-def _shuffle(iterable: Iterable) -> Iterator:
-    """shuffle the given iterable"""
-    result = list(iterable)
-    random_shuffle(result)  # renamed random.shuffle  -  shuffles in-place
-    return iter(result)
+def split_csv(original: FilePath, new_files: Sequence[FilePath], sniff: bool = False) -> None:
+    """split the `original` CSV-file into the given `new_files`
 
-
-def _sniff_csv(csvfile: Path) -> [csv.Dialect, List]:
-    """sniff the Dialect and the headers of the CSV-file"""
-    with csvfile.open('r', newline='') as fd:
-        sniffer = csv.Sniffer()
-        [fd.readline() for _ in range(10)]  # doesn't go wrong when file is less than 10 lines
-        ten_rows = fd.tell()  # get the position of the cursor after 10 rows has been read
-        fd.seek(0)  # reset cursor
-        dialect = sniffer.sniff(fd.read(ten_rows))
-        fd.seek(0)
-        headers = []
-        if sniffer.has_header(fd.read(ten_rows)):
-            fd.seek(0)
-            headers: list = next(csv.reader(fd, dialect=dialect))
-    return dialect, headers
-
-
-def split_csv(csvfile: Path, rename: Iterable[Path], shuffle: bool = False, **kwargs) -> None:
-    """Split the given CSV-file evenly into the given number of parts
-
-    :param csvfile: Original CSV-file to split up into parts
-    :type csvfile: Path
-    :param rename: List of strings holding the filenames for the new CSV-files
-                   If given this also dictates the number of splits to be made
-    :type rename: List[Path]
-    :param shuffle: Optional prefix to give to the new CSV-files
-                   Default: no shuffle
-    :type shuffle: bool
+    :param original: Original CSV-file
+    :type original: FilePath
+    :param new_files: List of filepaths where to write the CSV-rows to
+    :type new_files: Sequence[FilePath]
+    :param sniff: Checks dialect and captures the header of the CSV-file
+    :type sniff: bool
     :return: Nothing is returned
     :rtype: None
     """
-    # sniff out the dialect and the headers of the CSV-file
-    dialect, headers = _sniff_csv(csvfile)
-    # get the number of new files
-    splitnum = len(list(rename))
-    # open the given CSV-file in read-mode
-    with Path(csvfile).open('r', newline='') as given_csv:
-        if len(headers) > 0:
-            given_csv.readline()  # ignore headers headers
-        # calculate the rows with value in the CSV-file
-        file_length = len([1 for _ in csv.reader(given_csv) if _])
-        # calculate when to split the file
-        row_split = int(file_length / splitnum)
-        # assure that the file can be split up
-        assert row_split > 0, f"csvfile can't be split up, {splitnum} is larger than the available rows"
+    # sniff for dialect and headers
+    dialect, headers = _sniff_csv(original) if sniff else ('excel', [])
+    logging.debug(f'dialect: {dialect}')
+    logging.debug(f'headers: {headers}')
 
-        # reset cursor to start of file
-        given_csv.seek(0)
+    # read the original
+    with Path(original).open('r', newline='') as open_fd:
+        csv_reader = csv.reader(open_fd, dialect=dialect)
+        file_length = len(list(csv_reader))
+        open_fd.seek(0)
 
-        # read the rows of the CSV-file as a dict where the keys are the headers
-        csv_row = csv.reader(given_csv, dialect=dialect)
-        if len(headers) > 0:
-            next(csv_row)  # don't read the headers
+        # create file descriptors and CSV-writers
+        open_files = [Path(fd).open('w', newline='') for _, fd in zip(range(file_length), new_files)]
+        csv_writers = [csv.writer(fd, dialect=dialect) for _, fd in zip(range(file_length), open_files)]
 
-        if bool(shuffle):
-            csv_row = _shuffle(csv_row)  # shuffle the rows
+        if headers:  # write headers received by _sniff_csv
+            for csv_writer in csv_writers:
+                csv_writer.writerow(headers)
 
-        # create and fill the CSV-files
-        for filepath in rename:
-            # open the created filepath in (over)write-mode
-            with Path(filepath).open('w', newline='') as new_file:
-                csv_writer = csv.writer(new_file, dialect=dialect)
-                if len(headers) > 0:
-                    csv_writer.writerow(headers)
-                # write the row_split amount of rows into the new file
-                for row_num, row in enumerate(csv_row, start=1):
-                    csv_writer.writerow(row)
-                    if row_num >= row_split:
-                        break  # next file
-    # end split_csv
+        try:  # split the lines over the number of given files
+            for csv_writer, row in zip(cycle(csv_writers), csv_reader):
+                if not row:
+                    continue
+                csv_writer.writerow(row)  # cycle split's the file
+        except Exception as err:
+            logger.exception(err)
+            raise err
+        finally:  # always close files
+            for fd in open_files:
+                fd.close()
+
+
+def main(argv: Optional[list[str]] = None):
+    args: argparse.Namespace = parse_arguments(argv)
+    split_csv(args.csvfile, args.rename, sniff=True)
+    return 0
 
 
 if __name__ == '__main__':
-    raise SystemExit(
-        main(function=split_csv)
-    )
+    logging.basicConfig(level=logging.DEBUG)
+    raise SystemExit(main())
